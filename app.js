@@ -28,16 +28,78 @@ async function api(action, data = {}) {
   const url = apiUrl();
   if (!url) throw new Error('Server URL is not set. Open "Server settings" on the login screen.');
   let res, j;
+  net(1);
   try {
-    // text/plain body = no CORS preflight, which Apps Script cannot answer
-    res = await fetch(url, { method: 'POST', body: JSON.stringify({ action, data, token: S.token }) });
-  } catch (e) { throw new Error('Cannot reach server. Check your internet connection.'); }
-  try { j = await res.json(); } catch (e) { throw new Error('Unexpected server response. Check the Server URL.'); }
+    try {
+      // text/plain body = no CORS preflight, which Apps Script cannot answer
+      res = await fetch(url, { method: 'POST', body: JSON.stringify({ action, data, token: S.token }) });
+    } catch (e) { throw new Error('Cannot reach server. Check your internet connection.'); }
+    try { j = await res.json(); } catch (e) { throw new Error('Unexpected server response. Check the Server URL.'); }
+  } finally { net(-1); }
   if (!j.ok) {
     if (/session expired/i.test(j.error)) logout(true);
     throw new Error(j.error);
   }
   return j.data;
+}
+
+let inflight = 0;
+function net(d) { inflight = Math.max(0, inflight + d); const b = $('#netbar'); if (b) b.hidden = inflight === 0; }
+
+/* ---------------- local cache: screens show saved data at once, then update ---------------- */
+const CACHE_PREFIX = 'st_c_';
+const mem = {};
+const cKey = k => CACHE_PREFIX + (S.user ? S.user.id : '') + '_' + k;
+function cacheGet(k) {
+  if (k in mem) return mem[k];
+  try { const v = localStorage.getItem(cKey(k)); if (v) return (mem[k] = JSON.parse(v)); } catch (e) { /* ignore */ }
+  return undefined;
+}
+function cacheSet(k, v) {
+  mem[k] = v;
+  const s = JSON.stringify(v);
+  try { localStorage.setItem(cKey(k), s); }
+  catch (e) { clearCache('rec_'); try { localStorage.setItem(cKey(k), s); } catch (e2) { /* storage full: memory only */ } }
+}
+function cacheDrop(k) { delete mem[k]; try { localStorage.removeItem(cKey(k)); } catch (e) { /* ignore */ } }
+function clearCache(prefix = '') {
+  Object.keys(mem).forEach(k => { if (k.startsWith(prefix)) delete mem[k]; });
+  try {
+    Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX) && (!prefix || k.includes('_' + prefix)))
+      .forEach(k => localStorage.removeItem(k));
+  } catch (e) { /* ignore */ }
+}
+/** Render cached data immediately (if any), fetch fresh in the background, re-render only if it changed. */
+async function swr(key, action, data, render) {
+  const cached = cacheGet(key);
+  if (cached !== undefined) render(cached, true);
+  let fresh;
+  try { fresh = await api(action, data); }
+  catch (e) {
+    if (cached !== undefined) { if (S.token) toast('Could not refresh (showing saved data): ' + e.message, true); return; }
+    throw e;
+  }
+  cacheSet(key, fresh);
+  if (cached === undefined || JSON.stringify(cached) !== JSON.stringify(fresh)) render(fresh, false);
+}
+/** After a save, update the cached records of a student right away (server copy follows). */
+function applyLocalRecords(items) {
+  const now = new Date().toISOString();
+  items.forEach(it => {
+    const key = 'rec_' + it.student_id, recs = cacheGet(key);
+    if (!recs) return;
+    const i = recs.findIndex(r => r.parameter_id === it.parameter_id && r.date === it.date);
+    const value = (it.value || '').trim(), remarks = (it.remarks || '').trim();
+    if (!value && !remarks) { if (i >= 0) recs.splice(i, 1); }
+    else if (i >= 0) Object.assign(recs[i], { value, remarks, entered_by: S.user.id, updated_at: now });
+    else recs.push({ id: 'new_' + Math.random().toString(36).slice(2), student_id: it.student_id, parameter_id: it.parameter_id,
+      date: it.date, value, remarks, entered_by: S.user.id, created_at: now, updated_at: now });
+    cacheSet(key, recs);
+  });
+  cacheDrop('dash');
+}
+function saveBoot() {
+  if (S.loaded) cacheSet('boot', { me: S.user, schools: S.schools, parameters: S.params, students: S.students, users: S.users });
 }
 
 /* ---------------- helpers ---------------- */
@@ -66,7 +128,11 @@ function avatarHtml(s, big) {
 }
 
 async function getPhoto(id) {
-  if (!(id in S.photos)) S.photos[id] = (await api('getPhoto', { student_id: id })).data || '';
+  if (!(id in S.photos)) {
+    const c = cacheGet('ph_' + id);
+    if (c !== undefined) S.photos[id] = c;
+    else { S.photos[id] = (await api('getPhoto', { student_id: id })).data || ''; cacheSet('ph_' + id, S.photos[id]); }
+  }
   return S.photos[id];
 }
 
@@ -186,6 +252,7 @@ function setSession(r) {
 }
 
 function logout(expired) {
+  clearCache();
   S.token = null; S.user = null; S.loaded = false; S.photos = {};
   store.set('st_token', null); store.set('st_user', null);
   closeModal();
@@ -193,8 +260,15 @@ function logout(expired) {
   if (expired) toast('Session expired. Please log in again.', true);
 }
 
-async function loadAll() {
-  const d = await api('bootstrap');
+async function loadAll(withDashboard) {
+  const d = await api('bootstrap', { with_dashboard: !!withDashboard });
+  if (d.dashboard) cacheSet('dash', d.dashboard);
+  delete d.dashboard;
+  applyBoot(d);
+  saveBoot();
+}
+
+function applyBoot(d) {
   S.user = d.me; store.set('st_user', JSON.stringify(d.me));
   S.schools = d.schools; S.params = d.parameters; S.students = d.students; S.users = d.users;
   S.loaded = true;
@@ -215,7 +289,15 @@ async function router() {
   const name = parts[0] || 'home';
   showChrome(true);
   try {
-    if (!S.loaded) { app.innerHTML = LOADING; await loadAll(); if (seq !== routeSeq) return; }
+    if (!S.loaded) {
+      const boot = cacheGet('boot');
+      if (boot) {
+        applyBoot(boot);
+        loadAll(false).then(() => { // quietly refresh lists in the background
+          if (seq === routeSeq && name === 'students' && $('#modal').hidden) router();
+        }).catch(() => {});
+      } else { app.innerHTML = LOADING; await loadAll(true); if (seq !== routeSeq) return; }
+    } else saveBoot();
     if (ADMIN_VIEWS[name] && !isAdmin()) return go('#/home');
     const nav = { home: 'home', students: 'students', student: 'students', 'student-edit': 'students', entry: 'batch', batch: 'batch' }[name] || 'more';
     $$('#bottomnav a').forEach(a => a.classList.toggle('active', a.dataset.nav === nav));
@@ -231,26 +313,33 @@ async function router() {
 /* ---------------- HOME ---------------- */
 async function viewHome(seq) {
   title('Home');
-  app.innerHTML = LOADING;
-  const d = await api('dashboard');
-  if (seq !== routeSeq) return;
-  const pending = d.pending_student_ids.map(studentOf).filter(Boolean);
-  const perSchool = activeSchools().map(sc => [sc, S.students.filter(s => s.school_id === sc.id && s.status !== 'inactive').length]);
   app.innerHTML = `
     <div class="home-logo"><img src="logo-wide.png" alt="${esc(CFG.APP_NAME || 'Logo')}"></div>
     <h2 style="margin-top:4px">Hello, ${esc(S.user.name.split(' ')[0])}</h2>
-    <div class="grid stats">
-      <div class="stat"><div class="n">${d.active_students}</div><div class="l">Active students</div></div>
-      <div class="stat"><div class="n">${d.updated_this_week}</div><div class="l">Updated in last 7 days</div></div>
-      <div class="stat"><div class="n">${pending.length}</div><div class="l">Pending this week</div></div>
-      <div class="stat"><div class="n">${d.entries_this_week}</div><div class="l">Values entered (7 days)</div></div>
-    </div>
+    <div id="hStats">${LOADING}</div>
     <div class="row" style="margin:14px 0">
       <a class="btn" href="#/batch">✎ Weekly entry</a>
       <a class="btn secondary" href="#/student-edit/new">+ Add student</a>
       ${isAdmin() ? '<a class="btn secondary" href="#/params">Parameters</a>' : ''}
     </div>
     ${isAdmin() ? growthShell() : ''}
+    <div id="hLists"></div>`;
+  if (isAdmin()) bindGrowth();
+  await swr('dash', 'dashboard', {}, d => { if (seq === routeSeq) renderDash(d); });
+}
+
+function renderDash(d) {
+  if (!$('#hStats')) return;
+  const pending = d.pending_student_ids.map(studentOf).filter(Boolean);
+  const perSchool = activeSchools().map(sc => [sc, S.students.filter(s => s.school_id === sc.id && s.status !== 'inactive').length]);
+  $('#hStats').innerHTML = `
+    <div class="grid stats">
+      <div class="stat"><div class="n">${d.active_students}</div><div class="l">Active students</div></div>
+      <div class="stat"><div class="n">${d.updated_this_week}</div><div class="l">Updated in last 7 days</div></div>
+      <div class="stat"><div class="n">${pending.length}</div><div class="l">Pending this week</div></div>
+      <div class="stat"><div class="n">${d.entries_this_week}</div><div class="l">Values entered (7 days)</div></div>
+    </div>`;
+  $('#hLists').innerHTML = `
     ${perSchool.length > 1 ? `<div class="card"><h3>Students by school</h3>
       <ul class="list">${perSchool.map(([sc, n]) => `<li data-school="${sc.id}"><div class="grow">${esc(sc.name)}</div><b>${n}</b></li>`).join('')}</ul></div>` : ''}
     <div class="card"><h3>Pending this week (${pending.length})</h3>
@@ -266,9 +355,8 @@ async function viewHome(seq) {
         return `<li data-go="#/student/${s.id}"><div class="grow"><div class="title">${esc(s.name)}</div>
           <div class="muted">${esc(p.name)}: <b>${esc(r.value)}</b> ${esc(p.unit)} · ${fmtDate(r.date)} · by ${esc(userName(r.entered_by))}</div></div></li>`;
       }).join('')}</ul>` : '<div class="empty">No entries yet.</div>'}</div>`;
-  if (isAdmin()) bindGrowth();
-  $$('[data-go]', app).forEach(li => { li.onclick = () => go(li.dataset.go); });
-  $$('[data-school]', app).forEach(li => { li.onclick = () => { S.filter.school = li.dataset.school; go('#/students'); }; });
+  $$('#hLists [data-go]').forEach(li => { li.onclick = () => go(li.dataset.go); });
+  $$('#hLists [data-school]').forEach(li => { li.onclick = () => { S.filter.school = li.dataset.school; go('#/students'); }; });
 }
 
 /* ---------------- GROWTH MONITOR (admin home) ---------------- */
@@ -371,17 +459,25 @@ function lineChart(canvas, labels, datasets, yExtra = {}, tooltipLabel) {
 }
 
 let growthSeq = 0;
-async function renderGrowth() {
-  const box = $('#growth'); if (!box) return;
-  const mine = ++growthSeq, G = S.growth;
+function destroyGrowthCharts() {
   growthCharts.forEach(c => { try { c.destroy(); } catch (e) { /* ignore */ } });
   S.charts = S.charts.filter(c => !growthCharts.includes(c)); growthCharts = [];
-  box.innerHTML = LOADING;
+}
+
+function renderGrowth() {
+  const box = $('#growth'); if (!box) return;
+  const mine = ++growthSeq, G = S.growth;
   const from = growthFrom(G.group);
-  let data;
-  try { data = await api('growth', { group: G.group, from, school_id: G.school, class_name: G.cls }); }
-  catch (e) { if (mine === growthSeq) box.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
-  if (mine !== growthSeq || !document.body.contains(box)) return;
+  const key = 'growth_' + [G.group, from, G.school, G.cls].join('|');
+  if (cacheGet(key) === undefined) { destroyGrowthCharts(); box.innerHTML = LOADING; }
+  swr(key, 'growth', { group: G.group, from, school_id: G.school, class_name: G.cls }, data => {
+    if (mine === growthSeq && document.body.contains(box)) drawGrowth(box, data, from);
+  }).catch(e => { if (mine === growthSeq && document.body.contains(box)) box.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; });
+}
+
+function drawGrowth(box, data, from) {
+  const G = S.growth;
+  destroyGrowthCharts();
   const keys = Object.keys(data.entries).sort();
   if (!keys.length) { box.innerHTML = `<div class="card empty">No progress data for the ${RANGE_TEXT[G.group]} with these filters.</div>`; return; }
   const periods = periodList(G.group, from || keys[0], keys);
@@ -569,7 +665,7 @@ async function viewStudentEdit(seq, id) {
       const saved = await api('saveStudent', vals);
       const i = S.students.findIndex(x => x.id === saved.id);
       if (i >= 0) S.students[i] = saved; else S.students.push(saved);
-      if (newPhoto) { await api('savePhoto', { student_id: saved.id, data: newPhoto }); S.photos[saved.id] = newPhoto; }
+      if (newPhoto) { await api('savePhoto', { student_id: saved.id, data: newPhoto }); S.photos[saved.id] = newPhoto; cacheSet('ph_' + saved.id, newPhoto); }
       toast(s ? 'Saved' : 'Student added');
       go('#/student/' + saved.id);
     });
@@ -643,8 +739,7 @@ async function viewStudent(seq, id) {
     <div class="tabs" id="ptabs">${Object.entries(PERIODS).map(([k, [l]]) => `<button data-p="${k}" class="${S.period === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div id="pbody">${LOADING}</div>`;
   getPhoto(s.id).then(ph => { if (ph && seq === routeSeq) $('#pAvatar').innerHTML = avatarHtml(s, true); }).catch(() => {});
-  const allRecs = await api('getStudentRecords', { student_id: s.id });
-  if (seq !== routeSeq) return;
+  let allRecs = [];
   const draw = () => {
     S.charts.forEach(c => c.destroy()); S.charts = [];
     const recs = inPeriod(allRecs);
@@ -685,15 +780,19 @@ async function viewStudent(seq, id) {
         try {
           await api('deleteRecord', { id: b.dataset.del });
           const i = allRecs.findIndex(r => r.id === b.dataset.del); if (i >= 0) allRecs.splice(i, 1);
+          cacheSet('rec_' + s.id, allRecs); cacheDrop('dash');
           toast('Deleted'); draw();
         } catch (e) { toast(e.message, true); }
       };
     });
   };
   $$('#ptabs button').forEach(b => { b.onclick = () => { S.period = b.dataset.p; $$('#ptabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); }; });
-  draw();
   $('#pdfBtn').onclick = e => busy(e.target, () => makeReport(false));
   if (canShare) $('#shareBtn').onclick = e => busy(e.target, () => makeReport(true));
+  await swr('rec_' + s.id, 'getStudentRecords', { student_id: s.id }, recs => {
+    if (seq !== routeSeq) return;
+    allRecs = recs.slice(); draw();
+  });
 }
 
 function makeChart(canvas, st) {
@@ -852,9 +951,9 @@ async function viewEntry(seq, id, date) {
   if (!s) throw new Error('Student not found');
   title('Add progress', true);
   if (!activeParams().length) throw new Error('No parameters set up yet. ' + (isAdmin() ? 'Add them in More → Parameters.' : 'Ask the admin.'));
-  app.innerHTML = LOADING;
-  const recs = await api('getStudentRecords', { student_id: s.id });
-  if (seq !== routeSeq) return;
+  let recs = cacheGet('rec_' + s.id);
+  const freshP = api('getStudentRecords', { student_id: s.id }).then(r => { cacheSet('rec_' + s.id, r); return r; });
+  if (!recs) { app.innerHTML = LOADING; recs = await freshP; if (seq !== routeSeq) return; }
   let cur = date || today();
   app.innerHTML = `<form id="ef" novalidate>
     <div class="card"><div class="row" style="flex-wrap:nowrap">${avatarHtml(s)}<div class="grow"><b>${esc(s.name)}</b>
@@ -876,6 +975,10 @@ async function viewEntry(seq, id, date) {
           <input type="text" placeholder="Note (optional)" value="${esc(ex.remarks || '')}" data-pid="${p.id}" data-k="remarks" data-orig="${esc(ex.remarks || '')}"></div></div>`; }).join('')}</div>`).join('');
   };
   fill();
+  freshP.then(r => { // newer data arrived: refill only if nothing was typed yet
+    if (seq !== routeSeq || $$('#eparams [data-pid]').some(el => el.value.trim() !== el.dataset.orig)) return;
+    if (JSON.stringify(r) !== JSON.stringify(recs)) { recs = r; fill(); }
+  }).catch(() => {});
   $('#ed').onchange = e => { cur = e.target.value || today(); fill(); };
   $('#ef').onsubmit = async e => {
     e.preventDefault();
@@ -889,6 +992,7 @@ async function viewEntry(seq, id, date) {
     if (!list.length) return toast('Nothing changed');
     await busy($('button[type=submit]', e.target), async () => {
       const r = await api('saveRecords', { records: list });
+      applyLocalRecords(list);
       toast(`Saved (${r.inserted} new, ${r.updated} updated${r.deleted ? `, ${r.deleted} removed` : ''})`);
       go('#/student/' + s.id);
     });
@@ -942,7 +1046,9 @@ function viewBatch(seq) {
       const changed = cells.filter(c => c.value.trim() !== c.dataset.orig);
       if (!changed.length) return toast('Nothing changed');
       busy(e.target, async () => {
-        const r = await api('saveRecords', { records: changed.map(c => ({ student_id: c.dataset.sid, parameter_id: c.dataset.pid, date: B.date, value: c.value.trim(), remarks: c.dataset.rem })) });
+        const items = changed.map(c => ({ student_id: c.dataset.sid, parameter_id: c.dataset.pid, date: B.date, value: c.value.trim(), remarks: c.dataset.rem }));
+        const r = await api('saveRecords', { records: items });
+        applyLocalRecords(items);
         changed.forEach(c => { c.dataset.orig = c.value.trim(); c.classList.remove('changed'); });
         count();
         toast(`Saved (${r.inserted} new, ${r.updated} updated${r.deleted ? `, ${r.deleted} removed` : ''})`);
@@ -971,7 +1077,7 @@ function viewMore() {
     <div class="card muted small"><b>Install on phone:</b> open this site in Chrome (Android) → menu ⋮ → <i>Add to Home screen</i>.
       On iPhone: Safari → Share → <i>Add to Home Screen</i>.</div>`;
   $$('[data-go]', app).forEach(li => { li.onclick = () => go(li.dataset.go); });
-  $('#mRefresh').onclick = () => { S.loaded = false; S.photos = {}; toast('Refreshing…'); go('#/home'); };
+  $('#mRefresh').onclick = () => { clearCache(); S.loaded = false; S.photos = {}; toast('Refreshing…'); go('#/home'); };
   $('#mOut').onclick = () => { if (confirm('Log out?')) logout(); };
   $('#mPw').onclick = () => formModal({
     title: 'Change password',
