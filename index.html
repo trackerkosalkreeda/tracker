@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kosal Kreeda</title>
+  <meta name="theme-color" content="#8e1b2e">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-32.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar" id="topbar" hidden>
+    <button class="icon-btn" id="backBtn" aria-label="Back" hidden>&#8592;</button>
+    <img class="brand-mark" id="brandMark" src="icon-192.png" alt="">
+    <div class="tb-title"><h1 id="pageTitle">Kosal Kreeda</h1><div class="tb-sub" id="tbSub">Kosal Kreeda</div></div>
+    <a class="user-chip" id="whoAmI" href="#/more" aria-label="Account"></a>
+  </header>
+
+  <main id="app"></main>
+
+  <nav class="bottomnav" id="bottomnav" hidden>
+    <a href="#/home" data-nav="home"><span>&#8962;</span>Home</a>
+    <a href="#/students" data-nav="students"><span>&#9786;</span>Students</a>
+    <a href="#/batch" data-nav="batch"><span>&#9998;</span>Entry</a>
+    <a href="#/more" data-nav="more"><span>&#9776;</span>More</a>
+  </nav>
+
+  <div id="modal" class="modal" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="vendor/jspdf.plugin.autotable.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
