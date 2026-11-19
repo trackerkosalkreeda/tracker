@@ -99,8 +99,8 @@ th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap
 .batch input, .batch select { min-width: 80px; padding: 6px 8px; min-height: 36px; }
 .savebar { position: sticky; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 5; display: flex; align-items: center; gap: 10px;
   background: var(--card); border-radius: var(--radius); box-shadow: 0 2px 12px rgba(0,0,0,.12); padding: 8px 8px 8px 14px; margin-top: 4px; }
-.savebar #bcount { flex: 1; font-size: 13px; color: var(--muted); }
-.savebar.dirty #bcount { color: var(--brand); font-weight: 600; }
+.savebar #bcount, .savebar #aCount { flex: 1; font-size: 13px; color: var(--muted); }
+.savebar.dirty #bcount, .savebar.dirty #aCount { color: var(--brand); font-weight: 600; }
 .batch input.changed, .batch select.changed { border-color: var(--accent); background: #fff8e8; }
 
 .charts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
@@ -118,10 +118,10 @@ th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap
 .param-row .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
 
 .home-logo { text-align: center; padding: 10px 0 4px; }
-.home-logo img { width: 100%; max-width: 260px; height: auto; }
+.home-logo img { width: 100%; max-width: 320px; height: auto; }
 .login { max-width: 380px; margin: 8vh auto 0; }
 .login .logo { text-align: center; margin-bottom: 18px; }
-.login .logo img { width: 100%; max-width: 300px; height: auto; display: block; margin: 0 auto 6px; }
+.login .logo img { width: 100%; max-width: 340px; height: auto; display: block; margin: 0 auto 6px; }
 
 .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; justify-content: center; }
 .modal .sheet { background: var(--card); width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto;
@@ -136,3 +136,35 @@ th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap
 .toast.err { background: var(--bad); }
 .loading { text-align: center; padding: 40px 0; color: var(--muted); }
 .empty { text-align: center; padding: 24px 8px; color: var(--muted); }
+
+/* roles, subjects, courses, leave */
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px 8px; background: #fff; }
+.checks .check { margin: 0; min-height: 40px; }
+.checks input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand); }
+.checks-h { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 8px; }
+[data-f][hidden] { display: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; border-radius: 99px; background: var(--brand-soft); color: var(--brand); font-weight: 600; text-decoration: none; font-size: 14px; }
+.tag.leave { background: #fdf0dc; color: #9a5800; }
+.batch tr.onleave td { background: #fffaf2; }
+.batch tr.onleave td:first-child { background: #fffaf2; }
+.batch.one input, .batch.one select { min-width: 110px; width: 100%; }
+
+/* attendance register */
+.tag.absent { background: #fde8e6; color: #b03a2e; }
+.att-date { display: flex; align-items: center; gap: 8px; }
+.att-date .btn { min-width: 44px; font-size: 20px; padding: 6px 0; }
+.att-date input { text-align: center; }
+.att-day { text-align: center; font-weight: 600; color: var(--brand); margin-top: 4px; font-size: 14px; }
+.att-sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.att-sum > div { background: var(--card); border-radius: 12px; padding: 10px; text-align: center; font-size: 13px; color: var(--muted); box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.att-sum b { display: block; font-size: 22px; }
+.att-row { cursor: pointer; user-select: none; }
+.att-row.absent { background: #fff5f4; }
+.att-row.leave { cursor: default; opacity: .8; }
+.att-pill { min-width: 76px; text-align: center; padding: 8px 10px; border-radius: 99px; font-size: 13px; font-weight: 700; }
+.att-pill.p { background: #e3f4ea; color: #1e8a4c; }
+.att-pill.a { background: #c0392b; color: #fff; }
+.att-pill.leave { background: #fdf0dc; color: #9a5800; }
+.att-reason { margin-top: 6px; min-height: 36px; padding: 6px 10px; font-size: 14px; }
+.att-date .grow { flex: 1; min-width: 0; }
