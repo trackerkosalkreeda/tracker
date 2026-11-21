@@ -1,6 +1,6 @@
 // Caches the app files so it opens fast and works as an installed phone app.
 // Data always comes live from the server. Bump VERSION when you change files.
-const VERSION = 'tracker-v13';
+const VERSION = 'tracker-v17';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'logo-wide.png', 'icon-32.png',
   'icon-192.png', 'icon-512.png',
   'vendor/chart.umd.min.js', 'vendor/jspdf.umd.min.js', 'vendor/jspdf.plugin.autotable.min.js'];
